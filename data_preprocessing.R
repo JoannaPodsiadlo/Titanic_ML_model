@@ -108,7 +108,8 @@ ggplot(data = train , aes(x=as.factor(Sex), y=Age)) +
   geom_point(aes(color=Sex), alpha=0.2, position='jitter') + 
   geom_boxplot(outlier.size=5, alpha=0.1)
 #brak outliers w fare 
-
+write.csv(test,"test.csv")
+write.csv(train,"test.csv")
 #modele
 set.seed(1234)
 #knn model v1
