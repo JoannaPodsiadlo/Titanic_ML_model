@@ -5,6 +5,8 @@ if (!require("caTools")) install.packages("caTools")
 if (!require("VIM")) install.packages("VIM")
 if (!require("randomForest")) install.packages("randomForest")
 if (!require("pROC")) install.packages("pROC")
+if (!require("gplots")) install.packages("gplots")
+
 
 library(pROC)
 require(class)
@@ -14,9 +16,9 @@ library(ggplot2)
 library(VIM)
 require(caTools)
 
-setwd("~/Titanic_projekt")
-data <- read.csv2('titanic-passengers.csv', sep=";", na.strings = "")
 
+
+#################################### FUNKCJE ##################
 select_cols <- function(data)
 {
   # delete embarked 2 missing values
@@ -27,16 +29,8 @@ select_cols <- function(data)
   #titanic_data <- data.frame(data,dummies)
   titanic_data <- data.frame(data,data2)
 }
-titanic_data <- select_cols(data)
-rm(data)
-
-#Y variable
-sapply(titanic_data, class)
-
 convert_types <- function(titanic_data){
   titanic_data$Survived<-as.factor(titanic_data$Survived)
-  levels(titanic_data$Survived) <- c(0,1)
-
   titanic_data$Fare <- as.double(titanic_data$Fare)
   titanic_data$Age <- as.double(titanic_data$Age)
   titanic_data$Pclass <- as.factor(titanic_data$Pclass)
@@ -46,12 +40,28 @@ convert_types <- function(titanic_data){
   titanic_data$family_member_no <- as.factor(titanic_data$family_member_no)
   return(titanic_data)
 }
+
+###################################################################
+setwd("~/Titanic_projekt")
+data <- read.csv2('titanic-passengers.csv', sep=";", na.strings = "")
+titanic_data <- select_cols(data)
+rm(data)
 #for visuals with facotrs
 titanic_data <- convert_types(titanic_data)
+
+#zaleznosci 
+library("gplots")
+balloonplot(t(table(titanic_data$Survived, titanic_data$Sex) ), main ="Gender vs Survived", xlab ="", ylab="",
+            label = TRUE, show.margins = TRUE)
+balloonplot(t(table(titanic_data$Survived, titanic_data$SibSp) ), main ="SibSp vs Survived", xlab ="", ylab="",
+            label = TRUE, show.margins = TRUE)
+balloonplot(t(table(titanic_data$Sex, titanic_data$SibSp) ), main ="SibSp vs Sex", xlab ="", ylab="",
+            label = TRUE, show.margins = TRUE)
 
 #prepare data for KNN without factors
 sapply(titanic_data,levels)
 titanic_data$Sex <- sapply(as.character(titanic_data$Sex), switch, 'male' = 0, 'female' = 1)
+levels(titanic_data$Survived) <- c(0,1)
 titanic_data$Embarked[titanic_data$Embarked == ''] <- 'S'
 titanic_data$Embarked <- sapply(as.character(titanic_data$Embarked), switch, 'C' = 0, 'Q' = 1, 'S' = 2)
 titanic_data$SibSp <- as.numeric(titanic_data$SibSp)
@@ -108,8 +118,15 @@ ggplot(data = train , aes(x=as.factor(Sex), y=Age)) +
   geom_point(aes(color=Sex), alpha=0.2, position='jitter') + 
   geom_boxplot(outlier.size=5, alpha=0.1)
 #brak outliers w fare 
+
+
+
+
+
+
 write.csv(test,"test.csv")
 write.csv(train,"test.csv")
+
 #modele
 set.seed(1234)
 #knn model v1
