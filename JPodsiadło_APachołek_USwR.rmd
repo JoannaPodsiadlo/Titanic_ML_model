@@ -1,0 +1,627 @@
+---
+title: "Uczenie Statystyczne w R"
+author: "Joanna Podsiadło i Aleksandra Pachołek"
+date: "`r Sys.Date()`"
+output:
+  rmdformats::material:
+    highlight: kate
+---
+
+
+```{r setup, echo=FALSE, cache=FALSE}
+library(knitr)
+library(rmdformats)
+
+## Global options
+options(max.print="75")
+opts_chunk$set(echo=FALSE,
+	             cache=TRUE,
+               prompt=FALSE,
+               tidy=TRUE,
+               comment=NA,
+               message=FALSE,
+               warning=FALSE)
+opts_knit$set(width=75)
+```
+
+```{r message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+if (!require("ggthemes")) install.packages("ggthemes")
+if (!require("dplyr")) install.packages("dplyr")
+if (!require("ggplot2")) install.packages("ggplot2")
+if (!require("caTools")) install.packages("caTools")
+if (!require("VIM")) install.packages("VIM")
+if (!require("randomForest")) install.packages("randomForest")
+if (!require("pROC")) install.packages("pROC")
+if (!require("gplots")) install.packages("gplots")
+if (!require("plotROC")) install.packages("plotROC")
+library("plotROC")
+library("gridExtra")
+library(gplots)
+library(pROC)
+require(class)
+library("randomForest")
+library(dplyr)
+library(ggplot2)
+library(VIM)
+require(caTools)
+library(stringr)
+library(e1071)
+```
+
+# Cel projektu
+
+Celem niniejszego projektu jest analiza danych dotyczących katastrofy wycieczkowca Titanic, do której doszło 1912 r. Analiza ta ma służyć budowie modelu predykcyjnego, który odpowie na pytanie: „Jakie czynniki wpłynęły na przeżycie katastrofy Titanica?”. 
+
+W projekcie opisany i przestawiony zostanie proces analizy i obróbki danych wejściowych, modelowania oraz walidacji modelu. Użyte i porównane zostaną różne techniki uczenia statystycznego:
+
+* algorytm KNN,
+* lasy losowe,
+* regresja logistyczna
+* oraz maszyna wektorów nośnych. 
+
+# Dane 
+
+Pakiet zawierający dane o katastrofie należy do jednego z najczęściej używanych przykładowych pakietów i jest łatwo dostępny w internecie. Zawiera on następujące zmienne :
+
+* PassangerId - unikalny identyfikator nadany pasażerowi w celu ułatwienia analizy,
+* Surivied - zmienna binarna informująca o tym, czy pasażer przeżył (0- pasażer nie przeżył, 1 - pasażer przeżył)
+* Pclass - określenie klasy, w której znajdowało się miejsce wykupione przez pasażera,
+* Name - imię i nazwisko pasażera,
+* Sex - zmienna kategoryczna określająca płeć (male - jesli pasażer to mężczyzna, female- jeśli pasażer to kobieta)
+* Age - wiek pasażera w latach,
+* SibSp - liczba rodzeństwa i małżonków na pokładzie,
+* Parch - liczba rodziców i dzieci na pokładzie,
+* Ticket - numer biletu,
+* Fare - cena biletu,
+* Cabin - określenie kabiny, w której przebywał pasażer,
+* Embarked - port, w którym pasażer wsiadł na pokład (S- Southamption, Q- Queenstown, C- Cherbourg)
+
+Przedstawiają się one następująco:
+
+```{r echo=FALSE}
+titanic_data <- read.csv("data_for_visualization.csv")
+kable(head(titanic_data))
+```
+
+W pierwszym kroku wybrano zmienne, które logicznie mogą mieć związek z katastrofą. Wyłaczono więc z dalszej analizy zmienne Ticket, PassangerId, Name. 
+  
+  
+## Analiza opisowa
+
+```{r echo=FALSE, fig.align='center', fig.height=4, fig.width=10, message=FALSE, warning=FALSE, paged.print=FALSE}
+theme_set(theme_minimal())
+titanic_data$Pclass <-  as.factor(titanic_data$Pclass)
+p1 <- ggplot(titanic_data, aes(Sex, fill=Survived)) +
+  geom_histogram( stat="count")
+p2 <- ggplot(titanic_data, aes(Pclass, fill=Survived)) +
+  geom_histogram( stat="count")
+p3 <- ggplot(titanic_data, aes(Embarked, fill=Survived)) +
+  geom_histogram( stat="count")
+grid.arrange(p1, p2,p3, nrow = 1)
+```
+
+Na podstawie powyższych wykresów można zformułować następujące wnioski:
+
+**Sex**  
+
+Na pokładzie była, prawie dwukrotnie większa liczba meżczyzn niz kobiet, jednak katastrofę przezylo ponad 200 kobiet i niewiele ponad 100 meżczyzn, powodem zapewne jest fakt, iż kobiety miały pierwszeństwo miejsca w dostępnym szalupach. Zatem można wywnioskować, ze kobiety miały większe prawdopodobieństwo przeżycia niż mężczyzni.
+
+**Class**  
+
+Najwięcej osób podróżowało klasą 3 (prawie 500 osob) z czego około sto osób przeżylo katastrofę. Dla porownania klasą 1 podróżowało nieco ponad 200 osób i prawie 150 osob przeżyło. Można zauważyć, ze pódróżowanie pierwszą klasą zwiększa prawdopodobieństwo przeżycia.   
+
+**Embarked**  
+
+Na podstawie wykresu można wywnioskować, że najmniejsze szanse na przeżycie miały osoby wsiadajace w porcie Southampton, ponieważ katastrofę przeżyło ok. 30%, tam też najwiecej osób dołączyło do rejsu, bo aą ponad 600. Najkorzystniejszym portem był Cherbourg, bo stamtąd ponad połowa osób przeżyła.  
+
+
+```{r echo=FALSE, fig.align='center', fig.height=4, fig.width=10, message=FALSE, warning=FALSE, paged.print=FALSE}
+titanic_data$SibSp <-  as.factor(titanic_data$SibSp)
+titanic_data$Parch <-  as.factor(titanic_data$Parch)
+titanic_data$family_member_no <-  as.factor(titanic_data$family_member_no)
+
+p1 <- ggplot(titanic_data, aes(SibSp, fill=Survived)) +
+  geom_histogram( stat="count")
+p2 <- ggplot(titanic_data, aes(Parch, fill=Survived)) +
+  geom_histogram( stat="count")
+grid.arrange(p1, p2, nrow = 1)
+ggplot(titanic_data, aes(family_member_no, fill=Survived)) +
+  geom_histogram( stat="count")
+
+```
+
+**SibSp i Parch**  
+
+Istotną rolę w katastrofie odgrywała obecność bliskich na pokładzie. Stąd została skonstruowana nowa zmienna wyrażająca liczbę bliskich na pokładzie. Widać, że praktycznie wszystkie osoby które miały więcej niż 4 bliskie osoby na pokładzie nie przeżyły katastrofy.   
+
+```{r echo=FALSE, fig.align='center', fig.height=6, fig.width=10, message=FALSE, warning=FALSE, paged.print=FALSE}
+p1 <-  ggplot(titanic_data , aes(x=Age, fill=Survived)) +
+  geom_histogram(position="identity", alpha=0.8) +
+  facet_grid(Sex ~ .)
+p2 <- ggplot(titanic_data, aes(Age, fill=Survived)) +
+  geom_histogram( stat="count" )+  
+  geom_density(alpha=.2, fill="#FF6666")  # Overlay with transparent density plot
+
+grid.arrange(p1, p2, ncol = 1)
+```
+
+W zbiorze danych znajduja sie dwie zmienne ciagle.   
+
+**Age**   
+
+Najwięcej podróżujących mieściło się w przedziale wiekowym od 22 do 49 lat. Średnia wieku wynosiła 37 lat. Ciekawą zależność widać dla najstarszych kobiet na pokładzie, dla kazdej grupy wiekowej ponad polowa kobiet przeżyła katastrofę natomiast dla tej grupy spośród 5 kobiet przeżyła tylko jedna. W grupie mężczyzn od 15 do 60 lat większośćc nie przeżyła katastrofy. Stąd można wnioskowac, że są to osoby w sile wieku, ktore skupiły się na ratowaniu dzieci i kobiet.
+
+```{r echo=FALSE, fig.align='center', fig.height=4, fig.width=10, message=FALSE, warning=FALSE, paged.print=FALSE}
+ggplot(titanic_data , aes(x=Fare, fill=Survived)) +
+  geom_histogram(position="identity", alpha=0.8) +
+  facet_grid(Sex ~ .)
+```
+
+**Fare**  
+
+Cena biletów nie powinna wpływać na prawdopodobieństwo przeżycia aczkolwiek, widać ze najwięcej meżczyzn zginęło, jeżeli kupiło bilet w cenie od 160 do 220.
+
+**Noble**
+
+Dodadkowo utworzono jeszcze jedną zmienną, która na podstawie tytułów znajdujących się w zmiennej Name m.in. takich jak "Lady","Sir", określa czy osoba ta posiadała wyższy status społeczny. Zmienną tą nazwano Noble, przyjmuje ona wartości 1 - jeśli osoba posiadała tytuł świadczący o wyższym statusie społeczym oraz 0, gdsy go nie posiadała.
+
+## Dane brakujace
+
+Ilość występujących braków w danych zebrano i przedstawiono w tabeli:
+
+```{r, echo=FALSE, results='asis'}
+data <- read.csv2('titanic-passengers.csv', sep=";", na.strings = "")
+data$Name <- as.character(data$Name)
+data$Title <- sapply(data$Name, FUN=function(x) {strsplit(x, split='[,.]')[[1]][2]})
+data$Title <- sub(' ', '', data$Title)
+data$Title <- as.character(data$Title)
+
+noble_names <- c("Capt", "Col", "Don", "Dr", "Jonkheer", "Major", "Rev", "Sir",
+                 "Lady", "Mlle", "Mme", "Ms", "the Countess")
+
+data$Title[data$Title %in% noble_names] <- "Yes"
+data$Title[data$Title != "Yes"] <- "No"
+data$Noble<-data$Title
+data = subset(data, select = -c(Title) )
+dt <- data.frame(t(sapply(data, function(x) (sum(is.na(x))))))[,-1]
+knitr::kable(dt)
+```
+
+Zmienna "Cabin" zawiera tak wiele braków danych, że musi zostać pominięta w kolejnych analizach. Z kolei występujące braki zmiennej Age zostaną wypełnione, natomiast rekordy zawierające braki w zmiennej Sex usunięte.
+
+## Przygotowanie i agregacja danych
+
+Po wstępnej analizie przystąpiono do przygotowania danych do modelowania. W tym celu wszystkie wartosci typu "yes" i "no" zostana zamienione na binarne. Następnie dokonano podziału danych na zbiór treningowy i testowy w proporcji 80/20.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+select_cols <- function(data)
+{
+  # delete embarked 2 missing values
+  data <- data[!is.na(data$Embarked), ]
+  data2 <- data %>% select(Pclass,Sex,SibSp,Parch,Embarked,Noble)
+  #dummies <- fastDummies::dummy_cols(dummies) %>% select(-c(Parch,Pclass,Sex,SibSp,Embarked))
+  data <- data %>% select(Survived, Age,Fare)
+  #titanic_data <- data.frame(data,dummies)
+  titanic_data <- data.frame(data,data2)
+}
+convert_types <- function(titanic_data){
+  titanic_data$Survived<-as.factor(titanic_data$Survived)
+  titanic_data$Fare <- as.double(titanic_data$Fare)
+  titanic_data$Age <- as.double(titanic_data$Age)
+  titanic_data$Pclass <- as.factor(titanic_data$Pclass)
+  titanic_data["family_member_no"] <- (titanic_data$SibSp)+(titanic_data$Parch)
+  titanic_data$SibSp <- as.factor(titanic_data$SibSp)
+  titanic_data$Parch <- as.factor(titanic_data$Parch)
+  titanic_data$family_member_no <- as.factor(titanic_data$family_member_no)
+  titanic_data$Noble<-as.factor(titanic_data$Noble)
+  return(titanic_data)
+}
+prepare_data <- function(data)
+{
+  titanic_data$Sex <- sapply(as.character(titanic_data$Sex), switch, 'male' = 0, 'female' = 1)
+  levels(titanic_data$Survived) <- c(0,1)
+  titanic_data$Embarked[titanic_data$Embarked == ''] <- 'S'
+  titanic_data$Embarked <- sapply(as.character(titanic_data$Embarked), switch, 'C' = 0, 'Q' = 1, 'S' = 2)
+  titanic_data$SibSp <- as.numeric(titanic_data$SibSp)
+  titanic_data$Parch <- as.numeric(titanic_data$Parch)
+  titanic_data$Pclass <- as.numeric(titanic_data$Pclass)
+  titanic_data$family_member_no <- as.numeric(titanic_data$family_member_no)
+  levels(titanic_data$Noble)<-c(0,1)
+  return (titanic_data)
+}
+data <- read.csv2('titanic-passengers.csv', sep=";", na.strings = "")
+data$Name <- as.character(data$Name)
+data$Title <- sapply(data$Name, FUN=function(x) {strsplit(x, split='[,.]')[[1]][2]})
+data$Title <- sub(' ', '', data$Title)
+data$Title <- as.character(data$Title)
+
+noble_names <- c("Capt", "Col", "Don", "Dr", "Jonkheer", "Major", "Rev", "Sir",
+                 "Lady", "Mlle", "Mme", "Ms", "the Countess")
+
+data$Title[data$Title %in% noble_names] <- "Yes"
+data$Title[data$Title != "Yes"] <- "No"
+data$Noble<-data$Title
+data$Noble <- sapply(data$Title, function(x) is.element(x,noble_names))
+data = subset(data, select = -c(Title) )
+titanic_data <- select_cols(data)
+titanic_data <- convert_types(titanic_data)
+titanic_data <- prepare_data(data)
+set.seed(101) 
+sample = sample.split(titanic_data, SplitRatio = .8)
+train = subset(titanic_data, sample == TRUE)
+test  = subset(titanic_data, sample == FALSE)
+test <- na.omit(test)
+
+```
+
+## Uzupełnienie braków i usunięcie wartości odstających
+
+Braki danych wystąpiły w zmiennej Age oraz zmiennej objaśnianej - Surivived. Jest ich sporo, poniewaz 177 dla calego datasetu i 134 dla treningowego. Braki te zostaną imputowane przy pomocy algorytmu KNN. Zasada działania algorytmu jest prosta - obliczane są odległości pomiędzy wektorami wartości zmiennjych dla każdego rekordu, a następnie brakującą wartość uzupełnia sie wartością z najbardziej podobnego (najbliższego) rekordu.
+
+Wykres po lewej stronie przedstawia wartości zmiennej Age przed imputacją, natomiast wykres po prawej po imputacji. Widać że rozkłady zachowały swój kształt, zatem przekształcenie nie powinno wpłynac na jakość predykcji, a tym sposobem uniknięto dużej utraty obserwacji. Ponad to, ze zbioru testowego zostają usunięte obserwacje zawierające brakujące wartości.
+
+```{r echo=FALSE, fig.align='center', fig.height=4, fig.width=10, message=FALSE, warning=FALSE, paged.print=FALSE}
+p1 <- ggplot(train, aes(x=Age)) + 
+    geom_histogram(aes(y=..density..),      # Histogram with density instead of count on y-axis
+                   binwidth=.5,
+                   colour="black", fill="white") +
+    geom_density(alpha=.2, fill="#FF6666")  # Overlay with transparent density plot
+#missing data using knn 
+missing_values_imputation <- function(train){
+  k<- as.integer(sqrt(nrow(train)))
+  train <- kNN(train,  variable = colnames(train),  k = k)
+  train <- train[,1:10]
+  return (train)
+}
+train <- missing_values_imputation(train)
+p2 <- ggplot(train, aes(x=Age)) + 
+    geom_histogram(aes(y=..density..),      # Histogram with density instead of count on y-axis
+                   binwidth=.5,
+                   colour="black", fill="white") +
+    geom_density(alpha=.2, fill="#FF6666")  # Overlay with transparent density plot
+grid.arrange(p1, p2,nrow = 1)
+
+```
+
+Na ponizszym wykresie przyjęto oznaczenia:
+
+* 0-mężczyźni 
+* 1-kobiety.
+
+Wykres pudełkowy z lewej strony pokazuje rozkład wartości odstających w zależności od płci. Po prawej stronie widać rozkład zmiennej Age po usunięciu wartości odstających. Po przekształceniach w zbiorze treningowym pozostało 711 obserwacji.
+
+```{r echo=FALSE, fig.align='center', fig.height=4, fig.width=10, message=FALSE, warning=FALSE, paged.print=FALSE}
+p1 <- ggplot(data = train%>%mutate(Sex=as.factor(train$Sex)), aes(x=Sex, y=Age)) +
+  geom_point(aes(color=Sex), alpha=0.2, position='jitter') + 
+  geom_boxplot(outlier.size=5, alpha=0.1)
+
+
+remove_outliers <- function(data, colselect){
+  Q <- quantile(colselect, probs=c(.25, .75), na.rm = FALSE)
+  iqr <- IQR(colselect)
+  up <-  Q[2]+1.5*iqr # Upper Range  
+  low<- Q[1]-1.5*iqr # Lower Range
+  eliminated<- subset(data, colselect > (Q[1] - 1.5*iqr) & colselect < (Q[2]+1.5*iqr))
+  return (eliminated)
+}
+train <- remove_outliers(train, train$Age)
+
+p2 <- ggplot(train, aes(x=Age)) + 
+    geom_histogram(aes(y=..density..),      # Histogram with density instead of count on y-axis
+                   binwidth=.5,
+                   colour="black", fill="white") +
+    geom_density(alpha=.2, fill="#FF6666")  # Overlay with transparent density plot
+grid.arrange(p1, p2,nrow = 1)
+```
+
+# Modelowanie
+
+Dla każdej stosowanej metody budwy modelu prdykcyjnego (kNN, lasy losowe, regresja logistyczna, SVM) przedstawiono najlepszy z uzyskanych modeli a wraz z nimi parametry i wykresy mające służyć ich ocenie. Są to: 
+
+* **Dokładność predykcji** (ACC) - odsetek poprawnych klasyfikacji,
+* **Macierz pomyłek** (confusion matrix) - buduje się ja na podstawie zestawienia ze sobą wartości predykcji dla danych testowych na podstawie modelu i wartości rzeczywistych zmiennej objaśnianej ze zbioru testowego (Survived). Macierz daje informacje o obiektach, które są TP (true positive  pasażerowie, którzy przeżyli i model zaklasyfikował ich poprawnie), TN (true negative pasażerowie, którzy nie przeżyli i model zaklasyfikował ich poprawnie), FP (false positive – pasażerowie, którzy nieprzeżyli, a model zaklasyfikował, że przeżyli) i FN (false negative – osoby, które nieprzeżyły, a model zaklasyfikował, że przeżyły). 
+* **Czułość** (sensivity) = TP/(TP+FN)
+* **Specyficzność** (specivity) =TN/(TN+FP)
+* **Krzywa ROC**, która powstaje poprzez obliczenie wartosci funkcji decyzyjnej. Testujemy uzyskany klasyfikator dla różnych progów alfa (alfa jest to próg szacowanego pradopodobieństwa, powyżej którego obserwacja klasyfikowana jest do jednej kategorii, a poniżej do drugiej). Z każdej klasyfikacji otrzymujemy parę TPR i FPR, która jest pojedynczym punktem dla krzywej ROC. Im bardziej wpukły wykres krzywej ROC tym lepszy klasyfikator.
+* **AUC** - pole pod krzywą ROC 
+
+## K-najbliższych sąsiadów
+
+Algorytm kNN jest  przykładem algorytmu uczenia nadzorowanego. Może zostać użyty zarówno do klasyfikacji, jak i regresji. Działa w oparciu o tezę mówiącą o tym, że podobne obiekty znajdują się blisko siebie. Na podstawie przyjętej miary odległości np. euklidesowej (można skorzystac z innych metryk np. odległosc Hamminga) dane są grupowane i następnie przydzielane do poszczególnych kategorii.
+
+
+```{r echo=FALSE, fig.align='center', message=FALSE, warning=FALSE, paged.print=FALSE}
+set.seed(1234)
+k<- as.integer(sqrt(nrow(train[,-1])))
+knn_model <- class::knn(train[,-1],test[,-1],train$Survived, k = k,  l = 0, prob = TRUE, use.all = TRUE)
+```
+
+Macierz pomyłek - zbiór testowy:
+
+```{r echo=FALSE, fig.align='center', message=FALSE, warning=FALSE, paged.print=FALSE}
+tab <- table(knn_model,test$Survived)
+colnames(tab) <- c("Did not survived", "Survived")
+rownames(tab) <- c("Did not survived", "Survived")
+knitr::kable(tab)
+accurary_test <-  (sum(diag(tab)/(sum(rowSums(tab)))) * 100)
+```
+
+Krzywa ROC - zbiór testowy:
+
+```{r echo=FALSE, fig.align='center', message=FALSE, warning=FALSE, paged.print=FALSE}
+roc(as.vector(test$Survived), attributes(knn_model)$prob)
+plot(roc(test$Survived, attributes(knn_model)$prob),
+     print.thres = T,
+     print.auc=T)
+```
+
+Zbudowany tą metodą model uzyskał accuracy na poziomie **`r round(accurary_test,2)`**. W tym przypadku AUC wynosi 50,80% zatem klasyfikator jest zbliżony do klasyfikatora losowego. Czułość i specyficzność wyniosły odpowienio 34,36% i 80,95%
+
+## Lasy losowe  
+
+Lasy losowe są algorytmem bazującym na drzewach losowych. Działają one poprzez zagregowanie predykcji obliczonych na podstawie wielu drzew. Każde drzewo decyzyjne w "lesie" jest trenowane na podzbiorze zbioru danych tzw. "bootstraped dataset".
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+
+library(randomForest)
+rf <- randomForest(Survived~., data=train)
+rf
+importance(rf)
+pred_rf_test <- predict(rf, test, type="prob")
+pred_rf_train <- predict(rf, train, type="prob")
+```
+
+Macierz pomyłek - zbiór treningowy:
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+pred_rf_train2<-ifelse(pred_rf_train[,2] > 0.5, 1, 0)
+tab = table(train$Survived,pred_rf_train2)
+colnames(tab) <- c("Did not survived", "Survived")
+rownames(tab) <- c("Did not survived", "Survived")
+knitr::kable(tab)
+```
+
+Krzywa ROC - zbiór treningowy:
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+require(pROC)
+plot(roc(train$Survived, as.numeric(pred_rf_train[,2])), print.auc = TRUE)
+```
+
+
+Macierz pomyłek - zbiór testowy:
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+pred_rf_test2<-ifelse(pred_rf_test[,2] > 0.5, 1, 0)
+tab = table(test$Survived,pred_rf_test2)
+colnames(tab) <- c("Did not survived", "Survived")
+rownames(tab) <- c("Did not survived", "Survived")
+knitr::kable(tab)
+```
+
+Krzywa ROC - zbiór testowy:
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+require(pROC)
+plot(roc(test$Survived, as.numeric(pred_rf_test[,2])), print.auc = TRUE)
+
+```
+
+AUC osiągną poziom 98,30% zbioru treningowego, a dla zbioru testowego 86,70%. Natomist czułość i sepcyficzność wyniosły dla zbioru treningowego odpowiednio 97,40% i 93,79% , a dla bioru testowego 91,67% i 80,00%. Z kolei dokładność predykcji uplasowała się na poziomie 93,41% dla zbioru treningowego, a dla testowego na poziomie 83,78%
+
+## Regresja logistyczna
+
+Model regresji logistycznej jest szczególnym przypadkiem uogólnionego modelu liniowego. Znajduje zastosowanie, gdy zmienna zależna jest dychotomiczna, to znaczy przyjmuje tylko dwie wartości takie jak na przykład sukces lub porażka, wystąpienie lub brak pewnej jednostki chorobowej, kobieta lub mężczyzna. W zapisie matematycznym wartości te reprezentowane są jako 1 i 0.
+
+W celu wybrania odpowiedniej postaci modely regresji logistycznej przetestowano różne kombinację zmiennych. Przy wyborze ostatecznej postaci wzięto pod uwagę istotność statystyczną zmiennych oraz kryterium informacyjne AIC (im niższe tym model lepszy). Ostatecznie jako zmienne objaśniające wybrano: Age, Sex, Pclass oraz Embarked. Wyniki przestawiają się następująco:
+
+
+```{r}
+lr <- glm(Survived~Age+Sex+Pclass+Embarked, data=train, family = "binomial")
+summary(lr)
+```
+
+Macierz pomyłek - zbiór treningowy:
+
+```{r message=FALSE, warning=FALSE}
+pred_lr_train <- predict(lr, train, type="response")
+pred_lr_train2<-ifelse(pred_lr_train > 0.5, 1, 0)
+cm = table(train$Survived, pred_lr_train2) 
+colnames(cm) <- c("Did not survived", "Survived")
+rownames(cm) <- c("Did not survived", "Survived")
+kable(cm)
+```
+
+Krzywa ROC - zbiór treningowy:
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+require(pROC)
+plot(roc(train$Survived, pred_lr_train), print.auc = TRUE)
+```
+
+
+Macierz pomyłek - zbiór testowy:
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+pred_lr_test <- predict(lr, test, type="response")
+pred_lr_test2<-ifelse(pred_lr_test> 0.5, 1, 0)
+cm = table(test$Survived, pred_lr_test2) 
+colnames(cm) <- c("Did not survived", "Survived")
+rownames(cm) <- c("Did not survived", "Survived")
+kable(cm)
+```
+
+Krzywa ROC - zbiór testowy:
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+require(pROC)
+plot(roc(test$Survived, pred_lr_test), print.auc = TRUE)
+```
+
+AUC wynosi dla zbiory treningowego 84,80%, a dla zbioru testowego 84,50%. Natomist czułość i sepcyficzność dla zbioru treningowego odpowiednio 80,00% i 78,49% , a dla zbioru testowego 91,67% i 80,00%. Dokładność predykcji wyniosła 80,09% dla zbioru treningowego i 79,05 % dla testowego.
+
+## SVM - Maszyna wektorów nośnych
+
+Maszyna wektorów nośnych, SVM (ang. Support vector Machine) to w teorii uczenia maszynowego jeden z algorytmów uczenia nadzworowanego stosowany głównie do klasyfikacji. Maszyna wektorów nośnych stanowi abstrakcyjny koncept maszyny, która działa jak klasyfikator, a której nauka ma na celu wyznaczenie hiperpłaszczyzny rozdzielającej z maksymalnym marginesem przykłady należące do dwóch klas.
+
+Do budowy modelu użyto wszystkich zmiennych, gdyż wtedy osiągana dokładność predykcji była najwyższa i wyniosła 73,4% dla zbioru treningowego i 79,05 testowego Natomiast AUC dla SVM wynosi 77,20% dla zbioru treningowgo 77,80%. Czułość i specyficzność wyniosły odpowienio 73,79% i 82,00% dla zbioru treningowego oraz 80,00% i 78,49% dla testowego.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+svm <- svm(formula = Survived ~ ., data = train, type = 'C-classification', kernel = 'linear') 
+svm_pred_test = predict(svm, newdata = test) 
+svm_pred_train = predict(svm, newdata = train)
+
+```
+
+Macierz pomyłek - zbiór treningowy:
+
+```{r echo=FALSE}
+cm = table(train$Survived, svm_pred_train) 
+colnames(cm) <- c("Did not survived", "Survived")
+rownames(cm) <- c("Did not survived", "Survived")
+kable(cm)
+```
+
+Krzywa ROC - zbiór treningowy:
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+require(pROC)
+gc_prob <- predict(svm, newdata = train[,-1], type = "prob")
+gc_pROC <- roc(response = train$Survived, predictor = as.numeric(unname(gc_prob)))
+plot(gc_pROC,print.auc = TRUE)
+```
+
+Macierz pomyłek -zbiór testowy:
+
+```{r echo=FALSE}
+cm = table(test$Survived, svm_pred_test) 
+colnames(cm) <- c("Did not survived", "Survived")
+rownames(cm) <- c("Did not survived", "Survived")
+kable(cm)
+```
+
+Krzywa ROC - zbiór testowy:
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+require(pROC)
+gc_prob <- predict(svm, newdata = test[,-1], type = "prob")
+gc_pROC <- roc(response = test$Survived, predictor = as.numeric(unname(gc_prob)))
+plot(gc_pROC,print.auc = TRUE)
+```
+
+
+# Wybór najlepszego modelu
+
+Na pierwszy rzut oka wybór najlepszego modelu, może wydawać się dosyć prostym zadaniem, ale w praktyce czasami jest to skomplikowany proces. Istnieje wiele różnych metod oceny modeli i wyboru najlepszego z nich. Często stosuje się techniki bazujące na porównawczej ocenie modeli (ang. competitive evaluation of models) polegającej na stosowaniu poszczególnych metod dla tych samych zbiorów danych, a następnie wybraniu najlepszej z nich lub zbudowaniu modelu złożonego. Właśnie tą metodą posłużono się w tej pracy. Poniżej zebrano wartości wybranych wskaźników obliczonych dla poszczególnych modeli.
+
+**ACC**:
+
+```{r}
+knn<-c(NA,60.81)
+rf<-c(93.41,83.78)
+lr<-c(80.09,79.05)
+svm<-c(73.4,79.05)
+results<-rbind(knn,rf,lr,svm)
+colnames(results) <- c('zbiór treningowy [%]', 'zbiór testowy [%]')
+rownames(results) <- c('KNN', 'lasy losowe','regresja logistyczna','SVM')
+kable(results)
+```
+
+**AUC, czułość i specyficzność - zbiór treningowy**:
+
+```{r}
+knn<-c(NA,NA,NA)
+rf<-c(98.30,97.40,93.79)
+lr<-c(84.80,80.00,78.49)
+svm<-c(77.2,73.79,82.00)
+results<-rbind(knn,rf,lr,svm)
+colnames(results) <- c('AUC [%]' ,'czułość [%]', 'specyficzność [%]')
+rownames(results) <- c('KNN', 'lasy losowe','regresja logistyczna','SVM')
+kable(results)
+```
+
+**AUC, czułość i specyficzność - zbiór testowy**:
+
+```{r}
+knn<-c(53.80,34.36,80.95)
+rf<-c(86.70,91.67,80.00)
+lr<-c(84.50,91.67,80.00)
+svm<-c(77.80,80.00,78.49)
+results<-rbind(knn,rf,lr,svm)
+colnames(results) <- c('AUC [%]' ,'czułość [%]', 'specyficzność [%]')
+rownames(results) <- c('KNN', 'lasy losowe','regresja logistyczna','SVM')
+kable(results)
+```
+
+Analizując wyniki zestawione w tabelach mozemy bez wachania wytypować model zbudowany przy pomocy algorytmu random forest jako najlepszy spośród modeli.
+
+# Doskonalenie modelu
+
+Model predykcyjny uzyskany po zastosowaniu algorytmu lasów losowych został wytypowany jako najlepszy, dlatego też postanowiono podjąć próbę zwiększenia jakości predykcji poprzez udoskonalenie tego modelu. W tym celu użyto bardziej zaawansowanych technik takich jak tuning hiperparametrów i sprawdzian krzyżowy.
+
+Hiperparametry są to parametry konfigurowane przez twórców modelu np. liczba lasów w lesie losowym lub ilość grup w algorytmie KNN. Odpowiedni dobór hiperparametrów może zwiększyć skuteczność zbudowanego modelu. 
+
+W celu zapewnienia lepszego podziału próby statystycznej na podzbiory użyty został sprawdzian krzyżowy z k-krotną walidacją. Oryginalna próba dzielona jest na k podzbiorów. Następnie każdy z podzbiorów służy jako zbiór testowy, a pozostałe zsumowane tworzą zbiór uczący i wykonywana jest analiza. Tym sposobem analiza jest wykonywana k razy. Następnie poprzez uśrednienie wszystkich k rezultatów uzyskiwana jest dokładność modelu. Dzięki tej metody można uniknąć nadmiernego dopasowania modelu i losowości z klasycznego podziału 80 do 20.
+
+Wykorzystany skrypt:
+
+```{r}
+
+library(caret)
+trctrl <- trainControl(method="repeatedcv",number = 10, repeats = 3, search="random")
+set.seed(3333)
+rf_fit <- train(Survived  ~ ., data = train,method="rf", trControl=trctrl,preProcess=c("center","scale"),tuneLength = 10)
+rf_fit
+plot(rf_fit)
+```
+
+Na podstawie wykresu można wywnioskować, że najkorzystniejsza liczba drzew w lesie to 4. Dzięki tej zmianie 
+dokładność predykcji wyniosła 95,64% na zbiorze treningowym i 84,46 % na testowym. Czułość i specyficzność wyniosły 90,15%, 99,07% na treningowym i 70,21%, 95,24% na testowym.
+
+Macierz pomyłek - zbiór treninogwy:
+
+```{r}
+rf_pred <- predict(rf_fit, newdata = train)
+#confusionMatrix(rf_pred,train$Survived)
+cm = table(rf_pred,train$Survived) 
+colnames(cm) <- c("Did not survived", "Survived")
+rownames(cm) <- c("Did not survived", "Survived")
+kable(cm)
+```
+
+Macierz pomyłek - zbiór testowy:
+
+```{r}
+rf_pred <- predict(rf_fit, newdata = test)
+#confusionMatrix(rf_pred,test$Survived)
+cm = table(rf_pred,test$Survived) 
+colnames(cm) <- c("Did not survived", "Survived")
+rownames(cm) <- c("Did not survived", "Survived")
+cm
+```
+
+ROC - zbiór treningowy:
+
+```{r}
+result.predicted.prob <- predict(rf_fit, train, type="prob") # Prediction
+
+result.roc <- roc(train$Survived, result.predicted.prob[,2]) # Draw ROC curve.
+plot(result.roc, print.thres="best", print.thres.best.method="closest.topleft", print.auc = TRUE)
+
+```
+
+ROC - zbiór testowy:
+
+```{r}
+result.predicted.prob <- predict(rf_fit, test, type="prob") # Prediction
+
+result.roc <- roc(test$Survived, result.predicted.prob[,2]) # Draw ROC curve.
+plot(result.roc, print.thres="best", print.thres.best.method="closest.topleft", print.auc = TRUE)
+
+```
+
+Wartość AUC wyniosła 99,50% na zbiorze treningowym oraz 86.60% na zbiorze testowym, zatem poprzez zastosowanie tuningu hiperparametrów i sprawdzianowi krzyżowemu udało się poprawić wyniki.
+
+# Podsumowanie
+
+Proces budowy modelu predykcyjnego ma często bardzo złożony charakter. Oddziaływanie szeregu różnorodnych czynników egzogenicznych oraz endogenicznych nie ułatwia znalezienia tego jedynego najwłaściwszego rozwiązania.  Modele uczenia statystycznego stanowią niejednokrotnie dobre wyjście. Istotne jest odpowiednie przeprowadzenie poszczególnych etapów budowy modelu,gdyż od tego procesu zależy jakość osiąganych predykcji. W przypadku budowy modelu prognozującego przetrwanie na statku Titanic, spośród czterech zaproponowanych rozwiązań najlepiej sprawdził się model lasów losowych (ang. random forest).
